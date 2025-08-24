@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { supabase, isSupabaseConfigured, Region, ChecklistItem, RegionCost, Document } from '@/lib/supabase'
+import { supabase, isSupabaseConfigured, Region, ChecklistItem, RegionCost, Document, Schedule } from '@/lib/supabase'
 
 // 체크리스트 템플릿 정의
 export const checklistTemplate = {
@@ -174,6 +174,7 @@ interface DataStore {
   checklistItems: ChecklistItem[]
   costs: RegionCost[]
   documents: Document[]
+  schedules: Schedule[]
   loading: boolean
   error: string | null
   
@@ -183,6 +184,9 @@ interface DataStore {
   updateRegionInfo: (regionId: string, data: Partial<Region>) => Promise<void>
   uploadDocument: (regionId: string, file: File) => Promise<void>
   getRegionProgress: (regionId: string) => { completed: number; total: number; percentage: number }
+  addSchedule: (schedule: Omit<Schedule, 'id' | 'created_at' | 'updated_at'>) => Promise<void>
+  updateSchedule: (id: string, schedule: Partial<Schedule>) => Promise<void>
+  deleteSchedule: (id: string) => Promise<void>
 }
 
 export const useDataStore = create<DataStore>((set, get) => ({
@@ -190,6 +194,7 @@ export const useDataStore = create<DataStore>((set, get) => ({
   checklistItems: [],
   costs: [],
   documents: [],
+  schedules: [],
   loading: false,
   error: null,
 
@@ -198,23 +203,26 @@ export const useDataStore = create<DataStore>((set, get) => ({
     
     try {
       // 병렬로 모든 데이터 가져오기
-      const [regionsRes, checklistRes, costsRes, documentsRes] = await Promise.all([
+      const [regionsRes, checklistRes, costsRes, documentsRes, schedulesRes] = await Promise.all([
         supabase.from('regions').select('*').order('name'),
         supabase.from('checklist_items').select('*'),
         supabase.from('region_costs').select('*'),
-        supabase.from('documents').select('*')
+        supabase.from('documents').select('*'),
+        supabase.from('schedules').select('*').order('start_date')
       ])
 
       if (regionsRes.error) throw regionsRes.error
       if (checklistRes.error) throw checklistRes.error
       if (costsRes.error) throw costsRes.error
       if (documentsRes.error) throw documentsRes.error
+      if (schedulesRes.error) throw schedulesRes.error
 
       set({
         regions: regionsRes.data || [],
         checklistItems: checklistRes.data || [],
         costs: costsRes.data || [],
         documents: documentsRes.data || [],
+        schedules: schedulesRes.data || [],
         loading: false
       })
 
@@ -383,5 +391,68 @@ export const useDataStore = create<DataStore>((set, get) => ({
     const percentage = total > 0 ? Math.round((completed / total) * 100) : 0
 
     return { completed, total, percentage }
+  },
+
+  addSchedule: async (schedule: Omit<Schedule, 'id' | 'created_at' | 'updated_at'>) => {
+    try {
+      console.log('Adding schedule:', schedule)
+      
+      const { data, error } = await supabase
+        .from('schedules')
+        .insert([schedule])
+        .select()
+        .single()
+
+      if (error) {
+        console.error('Supabase error:', error)
+        throw error
+      }
+
+      console.log('Schedule added successfully:', data)
+      
+      set(state => ({
+        schedules: [...state.schedules, data]
+      }))
+    } catch (error: any) {
+      console.error('Failed to add schedule:', error)
+      set({ error: error.message })
+      throw error // 에러를 다시 throw해서 컴포넌트에서 처리할 수 있게 함
+    }
+  },
+
+  updateSchedule: async (id: string, schedule: Partial<Schedule>) => {
+    try {
+      const { error } = await supabase
+        .from('schedules')
+        .update(schedule)
+        .eq('id', id)
+
+      if (error) throw error
+
+      set(state => ({
+        schedules: state.schedules.map(s =>
+          s.id === id ? { ...s, ...schedule } : s
+        )
+      }))
+    } catch (error: any) {
+      set({ error: error.message })
+    }
+  },
+
+  deleteSchedule: async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('schedules')
+        .delete()
+        .eq('id', id)
+
+      if (error) throw error
+
+      set(state => ({
+        schedules: state.schedules.filter(s => s.id !== id)
+      }))
+    } catch (error: any) {
+      set({ error: error.message })
+    }
   }
 }))
